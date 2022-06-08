@@ -370,6 +370,7 @@ public class QuorumCnxManager {
             } else {
                 sock = SOCKET_FACTORY.get();
                 setSockOpts(sock);
+                // 远程的机器建立 socket 连接
                 sock.connect(electionAddr, cnxTO);
             }
             LOG.debug("Connected to server " + sid);
@@ -574,6 +575,7 @@ public class QuorumCnxManager {
             } else {
                 try {
                     InitialMessage init = InitialMessage.parse(protocolVersion, din);
+                    // 对方的 myid
                     sid = init.sid;
                     electionAddr = init.electionAddr;
                 } catch (InitialMessage.InitialMessageException ex) {
@@ -600,6 +602,8 @@ public class QuorumCnxManager {
         // do authenticating learner
         authServer.authenticate(sock, din);
         //If wins the challenge, then close the new connection.
+        // 比较自己的sid和对方的谁的大，对方比自己的小，不允许连接，只有对方比自己大的时候才连接
+        // socket 是双工的，没有必要各自作为 Client 建立两个重复的连接
         if (sid < self.getId()) {
             /*
              * This replica might still believe that the connection to sid is
@@ -627,6 +631,8 @@ public class QuorumCnxManager {
             LOG.warn("We got a connection request from a server with our own ID. "
                     + "This should be either a configuration error, or a bug.");
         } else { // Otherwise start worker threads to receive data.
+
+            // 又 初始化 发送和接收线程
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
@@ -637,11 +643,13 @@ public class QuorumCnxManager {
                 vsw.finish();
             }
 
+            // 为 远端的一台机器的连接 创建一个 worker 线程，放到map 里面
             senderWorkerMap.put(sid, sw);
-
+            // 为 远端的一台机器的连接 创建一个 队列，放到map 里面
             queueSendMap.putIfAbsent(sid,
                     new ArrayBlockingQueue<ByteBuffer>(SEND_CAPACITY));
 
+            // 这里的线程才是真正去发送的
             sw.start();
             rw.start();
         }
@@ -933,6 +941,7 @@ public class QuorumCnxManager {
                     ss.bind(addr);
                     while (!shutdown) {
                         try {
+                            // 阻塞接收
                             client = ss.accept();
                             setSockOpts(client);
                             LOG.info("Received connection request from {}", client.getRemoteSocketAddress());

@@ -1148,12 +1148,14 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
 
     boolean shuttingDownLE = false;
-    
+
+    // 根据当前的节点的状态做相关的业务处理
     @Override
     public void run() {
         updateThreadName();
 
         LOG.debug("Starting quorum peer");
+        // jmx 相关，投票不关注
         try {
             jmxQuorumBean = new QuorumBean(this);
             MBeanRegistry.getInstance().register(jmxQuorumBean, null);
@@ -1187,7 +1189,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
              * Main loop
              */
             while (running) {
-                // 默认就是 Looking
+                // 节点状态启动的时候默认就是 Looking
                 switch (getPeerState()) {
                 case LOOKING:
                     LOG.info("LOOKING");
@@ -1283,7 +1285,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 case LEADING:
                     LOG.info("LEADING");
                     try {
+                        // makeLeader 内部会新建一个 socket 用于数据通信
                         setLeader(makeLeader(logFactory));
+                        // 作为 leader 正常的逻辑
                         leader.lead();
                         setLeader(null);
                     } catch (Exception e) {

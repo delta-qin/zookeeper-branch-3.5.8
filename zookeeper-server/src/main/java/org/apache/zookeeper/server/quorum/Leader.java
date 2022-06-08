@@ -246,6 +246,7 @@ public class Leader {
                 if (self.getQuorumListenOnAllIPs()) {
                     ss = new ServerSocket(self.getQuorumAddress().getPort());
                 } else {
+                    // 这是 节点传输数据用的
                     ss = new ServerSocket();
                 }
             }
@@ -391,6 +392,7 @@ public class Leader {
                     Socket s = null;
                     boolean error = false;
                     try {
+                        // 这里就是传输数据的通道
                         s = ss.accept();
 
                         // start with the initLimit, once the ack is processed
@@ -470,6 +472,7 @@ public class Leader {
 
         try {
             self.tick.set(0);
+            // 正常的首先是没有加载数据的话首先加载数据
             zk.loadData();
 
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
@@ -477,6 +480,7 @@ public class Leader {
             // Start thread that waits for connection requests from
             // new followers.
             cnxAcceptor = new LearnerCnxAcceptor();
+            // 启动一个线程给 follower 同步数据
             cnxAcceptor.start();
 
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
@@ -655,6 +659,7 @@ public class Leader {
                     tickSkip = !tickSkip;
                 }
                 for (LearnerHandler f : getLearners()) {
+                    // 心跳
                     f.ping();
                 }
             }

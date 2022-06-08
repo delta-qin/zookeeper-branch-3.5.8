@@ -675,6 +675,7 @@ public class FastLeaderElection implements Election {
      * Send notifications to all peers upon a change in our vote
      */
     private void sendNotifications() {
+        // sid 就是机器的唯一ID，就是myid
         for (long sid : self.getCurrentAndNextConfigVoters()) {
             QuorumVerifier qv = self.getQuorumVerifier();
             ToSend notmsg = new ToSend(ToSend.mType.notification,
@@ -897,13 +898,17 @@ public class FastLeaderElection implements Election {
             int notTimeout = finalizeWait;
 
             synchronized(this){
+                // 选举周期 + 1
                 logicalclock.incrementAndGet();
-                // 更新选票的信息
+                // 更新选票的信息：初始化自己的选票（myid，最大的事务ID zxid）
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
 
             LOG.info("New election. My id =  " + self.getId() +
                     ", proposed zxid=0x" + Long.toHexString(proposedZxid));
+            // 往其他机器发选票，选自己，发到了应用层的发送队列 sendqueue.offer(notmsg);
+            // 这个队列是前面初始化的，还有专门的 worker 去poll 队列里的选票发送，都是异步的
+            // 选票发给别人
             sendNotifications();
 
             /*
@@ -916,6 +921,7 @@ public class FastLeaderElection implements Election {
                  * Remove next notification from queue, times out after 2 times
                  * the termination time
                  */
+                // 从队列拿到选票
                 Notification n = recvqueue.poll(notTimeout,
                         TimeUnit.MILLISECONDS);
 
@@ -924,9 +930,12 @@ public class FastLeaderElection implements Election {
                  * Otherwise processes new notification.
                  */
                 if(n == null){
+                    // 刚启动的时候传输层的队列是没有内容，这个就先和集群列表中所有的机器建立BIO连接
                     if(manager.haveDelivered()){
                         sendNotifications();
                     } else {
+                        // 一开始是空的，到else
+                        // 远程的机器建立 socket 连接
                         manager.connectAll();
                     }
 
@@ -939,6 +948,8 @@ public class FastLeaderElection implements Election {
                     LOG.info("Notification time out: " + notTimeout);
                 } 
                 else if (validVoter(n.sid) && validVoter(n.leader)) {
+                    // 一个循环结束回来
+                    // 直到收到其他机器的选票
                     /*
                      * Only proceed if the vote comes from a replica in the current or next
                      * voting view for a replica in the current or next voting view.
@@ -946,6 +957,7 @@ public class FastLeaderElection implements Election {
                     switch (n.state) {
                     case LOOKING:
                         // If notification > current, replace and send messages out
+                        // 一开始都是1
                         if (n.electionEpoch > logicalclock.get()) {
                             logicalclock.set(n.electionEpoch);
                             recvset.clear();
@@ -965,8 +977,14 @@ public class FastLeaderElection implements Election {
                                         + ", logicalclock=0x" + Long.toHexString(logicalclock.get()));
                             }
                             break;
+
+                            // 一开始一定是相等的
+                        //     totalOrderPredicate  就是最核心的比较逻辑，先用epoch比较，再用zxid比较，最后用机器的myid比较
                         } else if (totalOrderPredicate(n.leader, n.zxid, n.peerEpoch,
                                 proposedLeader, proposedZxid, proposedEpoch)) {
+
+                            /*  TRUE 的话就是对方赢了 */
+                            // 更新自己的选票，投递给对方，放到应用层的队列里面
                             updateProposal(n.leader, n.zxid, n.peerEpoch);
                             sendNotifications();
                         }
@@ -979,13 +997,17 @@ public class FastLeaderElection implements Election {
                         }
 
                         // don't care about the version if it's in LOOKING state
+                        // 收到的所有的选票
                         recvset.put(n.sid, new Vote(n.leader, n.zxid, n.electionEpoch, n.peerEpoch));
 
+                        // termPredicate 内部，会转换到一个set集合，内部会执行判断同一天机器上是否半数以上
                         if (termPredicate(recvset,
                                 new Vote(proposedLeader, proposedZxid,
                                         logicalclock.get(), proposedEpoch))) {
 
+                            // 发现了有超过半数以上的同一选票
                             // Verify if there is any change in the proposed leader
+                            // 如果刚刚找半数以上的时候又有新的选票，这里while再次和超过半数以上的选票比较
                             while((n = recvqueue.poll(finalizeWait,
                                     TimeUnit.MILLISECONDS)) != null){
                                 if(totalOrderPredicate(n.leader, n.zxid, n.peerEpoch,
@@ -999,9 +1021,12 @@ public class FastLeaderElection implements Election {
                              * This predicate is true once we don't read any new
                              * relevant message from the reception queue
                              */
+                            // 如果队列里没有了（可能是没发来，也可能是发来但是都是不合格的），就看看这个半数以上的是不是自己
                             if (n == null) {
+                                // learningState 设置当前节点为 FOLLOWING
                                 self.setPeerState((proposedLeader == self.getId()) ?
                                         ServerState.LEADING: learningState());
+                                // 返回新的选票
                                 Vote endVote = new Vote(proposedLeader,
                                         proposedZxid, logicalclock.get(), 
                                         proposedEpoch);
